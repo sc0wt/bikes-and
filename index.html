@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bikes And</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     overflow: hidden;
@@ -12,15 +13,51 @@
     width: 100vw;
     cursor: crosshair;
     background: #FFFFFF;
-  }
-  .canvas-container {
-    position: absolute;
-    top: 60px; left: 60px; right: 60px; bottom: 60px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
   }
-  svg#bike { width: 100%; height: 100%; }
+  .grid-container {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    width: calc(100vw - 40px);
+    height: calc(100vh - 70px);
+    gap: 0;
+  }
+  .bike-cell {
+    position: relative;
+    overflow: visible;
+  }
+  .bike-cell svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .title-bar {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 4px;
+  }
+  .title-bar a {
+    font-family: 'Inter', sans-serif;
+    font-size: 24px;
+    font-weight: 400;
+    color: #1a1a1a;
+    text-decoration: none;
+    letter-spacing: 0.02em;
+  }
+  .title-bar a:hover { opacity: 0.6; }
+  .title-bracket {
+    font-family: 'Inter', sans-serif;
+    font-size: 24px;
+    font-weight: 400;
+    color: #ccc;
+    letter-spacing: 0.02em;
+  }
   .motion-prompt {
     position: fixed; inset: 0; z-index: 100;
     background: #FFFFFF;
@@ -41,6 +78,15 @@
     transition: background 0.2s, color 0.2s;
   }
   .motion-prompt button:active { background: #1a1a1a; color: #fff; }
+  @media (max-width: 768px) {
+    .grid-container {
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(4, 1fr);
+      width: calc(100vw - 24px);
+      height: calc(100vh - 60px);
+    }
+    .title-bar a, .title-bracket { font-size: 20px; }
+  }
 </style>
 </head>
 <body>
@@ -50,55 +96,45 @@
   <button id="motionBtn">Enable Motion</button>
 </div>
 
-<div class="canvas-container" id="container">
-  <svg id="bike" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-    <polygon id="wheelRear"/>
-    <polygon id="wheelFront"/>
-    <polygon id="rearTriangle"/>
-    <polygon id="mainTriangle"/>
-    <line id="fork" stroke-linecap="round"/>
-    <line id="seatPost" stroke-linecap="round"/>
-    <path id="seat"/>
-    <polygon id="crankset"/>
-    <line id="stem" stroke-linecap="round"/>
-    <path id="dropBar" fill="none" stroke-linecap="round"/>
-  </svg>
+<div class="grid-container" id="grid"></div>
+<div class="title-bar">
+  <a href="https://www.strava.com/" target="_blank" rel="noopener">Bikes and</a>
+  <span class="title-bracket">&nbsp;[&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span>
 </div>
 
 <script>
-const PAL = {
-  orange:    { r:244, g:100, b:52 },
-  yellow:    { r:254, g:190, b:72 },
-  blue:      { r:89,  g:144, b:214 },
-  lightBlue: { r:189, g:216, b:243 },
-};
+// ── Palette ──
+const WHEEL_COLORS = [
+  { r:255, g:85,  b:68  }, // #FF5544
+  { r:255, g:187, b:0   }, // #FFBB00
+  { r:255, g:187, b:68  }, // #FFBB44
+  { r:68,  g:136, b:255 }, // #4488FF
+  { r:0,   g:102, b:255 }, // #0066FF
+  { r:255, g:170, b:255 }, // #FFAAFF
+  { r:255, g:85,  b:68  }, // wrap
+];
 function lerpC(c1,c2,t){
-  return `rgb(${Math.round(c1.r+(c2.r-c1.r)*t)},${Math.round(c1.g+(c2.g-c1.g)*t)},${Math.round(c1.b+(c2.b-c1.b)*t)})`;
+  const tt=Math.max(0,Math.min(1,t));
+  return `rgb(${Math.round(c1.r+(c2.r-c1.r)*tt)},${Math.round(c1.g+(c2.g-c1.g)*tt)},${Math.round(c1.b+(c2.b-c1.b)*tt)})`;
+}
+function getWheelColor(col, row, isRear, t){
+  const gridIdx = row * 4 + col;
+  const baseIdx = gridIdx % (WHEEL_COLORS.length - 1);
+  const wheelIdx = isRear ? baseIdx : (baseIdx + 1) % (WHEEL_COLORS.length - 1);
+  const drift = (Math.sin(t * 0.15 + gridIdx * 0.7) * 0.5 + 0.5);
+  const nextIdx = (wheelIdx + 1) % (WHEEL_COLORS.length - 1);
+  return lerpC(WHEEL_COLORS[wheelIdx], WHEEL_COLORS[nextIdx], drift * 0.35);
 }
 
-let input={x:0.5,y:0.5},smooth={x:0.5,y:0.5},useGyro=false,vbW=800,vbH=600,time=0;
-
-function updateViewBox(){
-  const c=document.getElementById('container').getBoundingClientRect();
-  const a=c.width/c.height;
-  if(a>1){vbH=600;vbW=600*a;}else{vbW=600;vbH=600/a;}
-  document.getElementById('bike').setAttribute('viewBox',`0 0 ${vbW} ${vbH}`);
-}
-window.addEventListener('resize',updateViewBox);
-updateViewBox();
-
-const $=id=>document.getElementById(id);
-const els={
-  wheelRear:$('wheelRear'),wheelFront:$('wheelFront'),
-  rearTriangle:$('rearTriangle'),mainTriangle:$('mainTriangle'),
-  fork:$('fork'),seatPost:$('seatPost'),seat:$('seat'),
-  crankset:$('crankset'),stem:$('stem'),dropBar:$('dropBar'),
-};
+const DARK = '#0a0a0a';
+const BIKE_COUNT = 12;
+const SEGMENTS = 15;
+let input={x:0.5,y:0.5}, smooth={x:0.5,y:0.5}, useGyro=false, time=0;
+const bikes = [];
 
 function lerp(a,b,t){return a+(b-a)*t;}
 function clamp(v,lo,hi){return Math.min(Math.max(v,lo),hi);}
 function map(v,a,b,c,d){return c+(d-c)*clamp((v-a)/(b-a),0,1);}
-function setLine(el,x1,y1,x2,y2){el.setAttribute('x1',x1);el.setAttribute('y1',y1);el.setAttribute('x2',x2);el.setAttribute('y2',y2);}
 function dist(x1,y1,x2,y2){return Math.sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));}
 
 function vertexNoise(seed,i,t){
@@ -106,7 +142,6 @@ function vertexNoise(seed,i,t){
   return Math.sin(s+t*0.37)*0.4+Math.sin(s*1.73+t*0.59)*0.35+Math.sin(s*2.91+t*0.83)*0.25;
 }
 
-const SEGMENTS=15;
 function irregularNgon(cx,cy,r,n,rotation,seed,t){
   let pts='';const sa=(Math.PI*2)/n;
   for(let i=0;i<n;i++){
@@ -118,27 +153,131 @@ function irregularNgon(cx,cy,r,n,rotation,seed,t){
   return pts.trim();
 }
 
-function roundedTriPath(ax,ay,bx,by,cx,cy,r){
-  function corner(px,py,v1x,v1y,v2x,v2y,rad){
-    let d1x=v1x-px,d1y=v1y-py,d2x=v2x-px,d2y=v2y-py;
-    let l1=Math.sqrt(d1x*d1x+d1y*d1y),l2=Math.sqrt(d2x*d2x+d2y*d2y);
-    d1x/=l1;d1y/=l1;d2x/=l2;d2y/=l2;
-    let mR=Math.min(l1/2,l2/2,rad);
-    return{p1x:px+d1x*mR,p1y:py+d1y*mR,p2x:px+d2x*mR,p2y:py+d2y*mR,r:mR};
-  }
-  const cA=corner(ax,ay,bx,by,cx,cy,r);
-  const cB=corner(bx,by,cx,cy,ax,ay,r);
-  const cC=corner(cx,cy,ax,ay,bx,by,r);
-  return`M ${cA.p1x},${cA.p1y} L ${cB.p2x},${cB.p2y} A ${cB.r} ${cB.r} 0 0 1 ${cB.p1x},${cB.p1y} L ${cC.p2x},${cC.p2y} A ${cC.r} ${cC.r} 0 0 1 ${cC.p1x},${cC.p1y} L ${cA.p2x},${cA.p2y} A ${cA.r} ${cA.r} 0 0 1 ${cA.p1x},${cA.p1y} Z`;
+function setLine(el,x1,y1,x2,y2){
+  el.setAttribute('x1',x1);el.setAttribute('y1',y1);
+  el.setAttribute('x2',x2);el.setAttribute('y2',y2);
 }
 
-function proximity(compX,compY,cursorX,cursorY){
-  const nx=compX/vbW,ny=compY/vbH;
-  const dx=nx-cursorX,dy=ny-cursorY;
-  const d=Math.sqrt(dx*dx+dy*dy);
-  const inf=clamp(1.0-d*2.0,0.0,1.0);
-  const eased=inf*inf*(3-2*inf);
-  return 1.0+eased*0.5;
+function createBikeSVG(index){
+  const ns='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(ns,'svg');
+  svg.setAttribute('xmlns',ns);
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  const els={};
+  els.wheelRear=document.createElementNS(ns,'polygon');
+  els.wheelFront=document.createElementNS(ns,'polygon');
+  els.rearTriangle=document.createElementNS(ns,'polygon');
+  els.rearTriangle.setAttribute('fill','none');
+  els.rearTriangle.setAttribute('stroke',DARK);
+  els.rearTriangle.setAttribute('stroke-linejoin','round');
+  els.mainTriangle=document.createElementNS(ns,'polygon');
+  els.mainTriangle.setAttribute('fill','none');
+  els.mainTriangle.setAttribute('stroke',DARK);
+  els.mainTriangle.setAttribute('stroke-linejoin','round');
+  els.fork=document.createElementNS(ns,'line');
+  els.fork.setAttribute('stroke-linecap','round');
+  els.fork.setAttribute('stroke',DARK);
+  els.seatPost=document.createElementNS(ns,'line');
+  els.seatPost.setAttribute('stroke-linecap','round');
+  els.seatPost.setAttribute('stroke',DARK);
+  els.seatLower=document.createElementNS(ns,'line');
+  els.seatLower.setAttribute('stroke-linecap','round');
+  els.seatLower.setAttribute('stroke',DARK);
+  els.seatUpper=document.createElementNS(ns,'line');
+  els.seatUpper.setAttribute('stroke-linecap','round');
+  els.seatUpper.setAttribute('stroke',DARK);
+  els.crankset=document.createElementNS(ns,'polygon');
+  els.stem=document.createElementNS(ns,'line');
+  els.stem.setAttribute('stroke-linecap','round');
+  els.stem.setAttribute('stroke',DARK);
+  els.dropBar=document.createElementNS(ns,'path');
+  els.dropBar.setAttribute('fill','none');
+  els.dropBar.setAttribute('stroke-linecap','round');
+  els.dropBar.setAttribute('stroke',DARK);
+
+  svg.appendChild(els.wheelRear);
+  svg.appendChild(els.wheelFront);
+  svg.appendChild(els.rearTriangle);
+  svg.appendChild(els.mainTriangle);
+  svg.appendChild(els.fork);
+  svg.appendChild(els.seatPost);
+  svg.appendChild(els.seatLower);
+  svg.appendChild(els.seatUpper);
+  svg.appendChild(els.crankset);
+  svg.appendChild(els.stem);
+  svg.appendChild(els.dropBar);
+
+  return {svg, els, seed: index*7+1, col: index%4, row: Math.floor(index/4)};
+}
+
+const gridEl=document.getElementById('grid');
+for(let i=0;i<BIKE_COUNT;i++){
+  const cell=document.createElement('div');
+  cell.className='bike-cell';
+  const bike=createBikeSVG(i);
+  cell.appendChild(bike.svg);
+  gridEl.appendChild(cell);
+  bikes.push(bike);
+}
+
+function updateCellRects(){
+  const cells=document.querySelectorAll('.bike-cell');
+  cells.forEach((cell,i)=>{
+    const r=cell.getBoundingClientRect();
+    const a=r.width/r.height;
+    let vbW,vbH;
+    if(a>1){vbH=400;vbW=400*a;}else{vbW=400;vbH=400/a;}
+    bikes[i].baseVbW=vbW;
+    bikes[i].baseVbH=vbH;
+    bikes[i].cellRect=r;
+  });
+}
+window.addEventListener('resize',updateCellRects);
+updateCellRects();
+
+// ── Cursor position in viewBox coordinates for a given cell ──
+function cursorInVB(bike, smx, smy){
+  const r = bike.cellRect;
+  if(!r) return {x: bike.baseVbW/2, y: bike.baseVbH/2};
+  const px = smx * window.innerWidth;
+  const py = smy * window.innerHeight;
+  // Map page coords to viewBox coords
+  const vx = ((px - r.left) / r.width) * bike.baseVbW;
+  const vy = ((py - r.top) / r.height) * bike.baseVbH;
+  return {x: vx, y: vy};
+}
+
+// ── Proximity of a point to cursor, in viewBox space ──
+// Returns a scale multiplier: 1.0 at rest, up to maxBoost when cursor is right on it
+function wheelProximity(wx, wy, cx, cy, vbW, vbH){
+  const diag = Math.sqrt(vbW*vbW + vbH*vbH);
+  const d = dist(wx, wy, cx, cy) / diag;
+  // Tight falloff: influence radius ~25% of diagonal
+  const inf = clamp(1.0 - d * 4.0, 0, 1);
+  const eased = inf * inf * (3 - 2 * inf); // smoothstep
+  return eased;
+}
+
+// ViewBox drift
+function getViewBoxDrift(bike, mx, my){
+  const r=bike.cellRect;
+  if(!r) return {dx:0, dy:0};
+  const cx_page = mx * window.innerWidth;
+  const cy_page = my * window.innerHeight;
+  const cellCX = r.left + r.width/2;
+  const cellCY = r.top + r.height/2;
+  const dirX = cx_page - cellCX;
+  const dirY = cy_page - cellCY;
+  const len = Math.sqrt(dirX*dirX + dirY*dirY) || 1;
+  const diag = Math.sqrt(window.innerWidth**2 + window.innerHeight**2);
+  const closeness = clamp(1.0 - (Math.sqrt((cx_page-cellCX)**2+(cy_page-cellCY)**2)/diag)*3.5, 0, 1);
+  const prox = closeness * closeness * (3 - 2*closeness);
+  const maxDriftX = bike.baseVbW * 0.15;
+  const maxDriftY = bike.baseVbH * 0.15;
+  return {
+    dx: (dirX/len) * maxDriftX * prox,
+    dy: (dirY/len) * maxDriftY * prox
+  };
 }
 
 function repelFromCircle(px,py,cx,cy,radius,margin){
@@ -153,172 +292,283 @@ function repelFromCircle(px,py,cx,cy,radius,margin){
   return{x:px+dirX*pushDist,y:py+dirY*pushDist};
 }
 
-function repelFromBothWheels(px,py,rAxX,rAxY,rR,fAxX,fAxY,rF,margin){
-  let pt=repelFromCircle(px,py,rAxX,rAxY,rR,margin);
-  pt=repelFromCircle(pt.x,pt.y,fAxX,fAxY,rF,margin);
+function repelBoth(px,py,rax,ray,rR,fax,fay,fR,margin){
+  let pt=repelFromCircle(px,py,rax,ray,rR,margin);
+  pt=repelFromCircle(pt.x,pt.y,fax,fay,fR,margin);
   return pt;
 }
 
-function update(){
-  time+=0.008;
-  smooth.x=lerp(smooth.x,input.x,0.055);
-  smooth.y=lerp(smooth.y,input.y,0.055);
-  const mx=smooth.x,my=smooth.y;
-  const cxVB=vbW/2,cyVB=vbH/2;
+function updateBike(bike, smx, smy, t){
+  const {els, seed, baseVbW, baseVbH, col, row} = bike;
+  if(!baseVbW || !baseVbH) return;
+  const vbW = baseVbW;
+  const vbH = baseVbH;
 
-  // ── Wheel radii ──
-  const baseR=vbH*0.168;
-  const globalScale=map(my,0,1,1.5,0.45);
-  const frontBias=map(mx,0,1,0.55,1.6);
-  const rearBias=map(mx,0,1,1.6,0.55);
-  const frameLenMult=map(mx,0,1,0.55,1.6);
-  const frameThickMult=map(my,0,1,0.4,1.8);
+  // ViewBox drift
+  const drift = getViewBoxDrift(bike, smooth.x, smooth.y);
+  bike.svg.setAttribute('viewBox', `${-drift.dx} ${-drift.dy} ${vbW} ${vbH}`);
 
-  // Base axle positions (no ground constraint — just centered vertically)
-  const baseY=cyVB+vbH*0.05; // slight vertical offset so bike sits slightly below center
-  const wheelSpread=vbW*0.18+vbW*0.22*frameLenMult;
-  const baseRearX=cxVB-wheelSpread/2;
-  const baseFrontX=cxVB+wheelSpread/2;
+  // Cursor in this cell's viewBox space
+  const cur = cursorInVB(bike, smooth.x, smooth.y);
 
-  let rR_base=clamp(baseR*globalScale*rearBias,vbH*0.04,vbH*0.35);
-  let rF_base=clamp(baseR*globalScale*frontBias,vbH*0.04,vbH*0.35);
+  const cxVB = vbW/2;
+  const cyVB = vbH/2;
 
-  // Proximity boost on radii
-  const proxRear=proximity(baseRearX,baseY,mx,my);
-  const proxFront=proximity(baseFrontX,baseY,mx,my);
-  let rR=clamp(rR_base*proxRear,vbH*0.04,vbH*0.45);
-  let rF=clamp(rF_base*proxFront,vbH*0.04,vbH*0.45);
+  // ── BASE wheel positions (before scaling) ──
+  const baseSpread = vbW * 0.28;
+  const baseY = cyVB + vbH * 0.02;
+  const baseRearX = cxVB - baseSpread/2;
+  const baseFrontX = cxVB + baseSpread/2;
+  const baseWheelR = vbH * 0.1;
 
-  // ── Push wheel centers toward edges proportional to growth ──
-  // How much each wheel has grown beyond its base size
-  const rR_growth=(rR-baseR)/baseR; // negative when small, positive when large
-  const rF_growth=(rF-baseR)/baseR;
-  // Push factor: larger wheels push harder toward edges
-  const pushStrength=vbW*0.15;
-  const rearPushX=clamp(rR_growth,0,2)*pushStrength*-1; // push left
-  const frontPushX=clamp(rF_growth,0,2)*pushStrength*1;  // push right
-  // Also push vertically away from center when large
-  const rearPushY=clamp(rR_growth,0,2)*vbH*0.05;  // push down slightly
-  const frontPushY=clamp(rF_growth,0,2)*vbH*0.05;
+  // ── LOCAL proximity scaling per wheel ──
+  // Each wheel scales based on how close the cursor is to IT specifically
+  const rearProx = wheelProximity(baseRearX, baseY, cur.x, cur.y, vbW, vbH);
+  const frontProx = wheelProximity(baseFrontX, baseY, cur.x, cur.y, vbW, vbH);
 
-  const rearAxleX=baseRearX+rearPushX;
-  const rearAxleY=baseY+rearPushY;
-  const frontAxleX=baseFrontX+frontPushX;
-  const frontAxleY=baseY+frontPushY;
+  const restScale = 1.25;
+  const maxBoost = 3.2;
 
-  const repelMargin=vbH*0.015;
+  let rR = baseWheelR * (restScale + (maxBoost - restScale) * rearProx);
+  let rF = baseWheelR * (restScale + (maxBoost - restScale) * frontProx);
 
-  // BB centered between actual wheel positions
-  let bbX_raw=(rearAxleX+frontAxleX)/2;
-  let bbY_raw=(rearAxleY+frontAxleY)/2+vbH*0.035*frameThickMult;
-  const proxBB=proximity(bbX_raw,bbY_raw,mx,my);
-  let bb=repelFromBothWheels(bbX_raw,bbY_raw,rearAxleX,rearAxleY,rR,frontAxleX,frontAxleY,rF,repelMargin);
-  const bbX=bb.x,bbY=bb.y;
+  // Clamp
+  rR = clamp(rR, vbH * 0.04, vbH * 0.48);
+  rF = clamp(rF, vbH * 0.04, vbH * 0.48);
 
-  // Seat tube
-  const seatAngleDeg=73+map(my,0,1,7,-7);
-  const seatAngleRad=seatAngleDeg*(Math.PI/180);
-  const seatTubeLen=(vbH*0.15+vbH*0.06*frameThickMult)*proxBB;
-  let sjX_raw=bbX-Math.cos(seatAngleRad)*seatTubeLen;
-  let sjY_raw=bbY-Math.sin(seatAngleRad)*seatTubeLen;
-  let sj=repelFromBothWheels(sjX_raw,sjY_raw,rearAxleX,rearAxleY,rR,frontAxleX,frontAxleY,rF,repelMargin);
-  const seatJointX=sj.x,seatJointY=sj.y;
+  // ── Wheel edge constraint: edges stay within maxGap ──
+  const maxEdgeGap = vbH * 0.12;
+  const minEdgeGap = vbH * 0.015;
 
-  const seatPostExtend=vbH*0.04*proxBB;
-  let stX_raw=seatJointX-Math.cos(seatAngleRad)*seatPostExtend;
-  let stY_raw=seatJointY-Math.sin(seatAngleRad)*seatPostExtend;
-  let st=repelFromBothWheels(stX_raw,stY_raw,rearAxleX,rearAxleY,rR,frontAxleX,frontAxleY,rF,repelMargin);
-  const seatTopX=st.x,seatTopY=st.y;
+  // Compute spread from radii
+  let spread = baseSpread;
+  let edgeGap = spread - rR - rF;
+  if(edgeGap > maxEdgeGap){
+    spread = rR + rF + maxEdgeGap;
+  } else if(edgeGap < minEdgeGap){
+    spread = rR + rF + minEdgeGap;
+  }
 
-  // Head tube
-  const proxHead=proximity(baseFrontX,baseY,mx,my);
-  let htX_raw=seatJointX+vbW*0.16*frameLenMult*proxHead;
-  let htY_raw=seatJointY+map(my,0,1,-vbH*0.03,vbH*0.04);
-  let ht=repelFromBothWheels(htX_raw,htY_raw,rearAxleX,rearAxleY,rR,frontAxleX,frontAxleY,rF,repelMargin);
-  const headTubeX=ht.x,headTubeY=ht.y;
+  const rearAxleX = cxVB - spread/2;
+  const frontAxleX = cxVB + spread/2;
+  const rearAxleY = baseY;
+  const frontAxleY = baseY;
 
-  // Colors
-  const mainFrameColor=lerpC(PAL.orange,PAL.yellow,mx);
-  const rearFrameColor=lerpC(PAL.yellow,PAL.orange,mx);
-  const frontWheelColor=lerpC(PAL.blue,PAL.lightBlue,mx);
-  const rearWheelColor=lerpC(PAL.lightBlue,PAL.blue,mx);
-  const seatPostColor=lerpC(PAL.orange,PAL.blue,mx);
-  const crankColor=lerpC(PAL.yellow,PAL.orange,mx);
-  const seatColor=lerpC(PAL.yellow,PAL.orange,my);
-  const barColor=lerpC(PAL.blue,PAL.orange,mx);
-  const forkColor=lerpC(PAL.orange,PAL.yellow,my);
+  // Stroke scales with average wheel size
+  const avgR = (rR + rF) / 2;
+  const sw = clamp(avgR * 0.09, 1.5, vbH * 0.045);
+
+  const repelMargin = sw * 0.5;
+
+  // ── BB: centered between wheel EDGES ──
+  const rearEdge = rearAxleX + rR;
+  const frontEdge = frontAxleX - rF;
+  const bbX_raw = (rearEdge + frontEdge) / 2;
+  const bbY_raw = baseY + avgR * 0.25;
+  let bb = repelBoth(bbX_raw, bbY_raw, rearAxleX, rearAxleY, rR, frontAxleX, frontAxleY, rF, repelMargin);
+  const bbX = bb.x, bbY = bb.y;
+
+  // ── Seat tube ──
+  const seatAngleDeg = 73;
+  const seatAngleRad = seatAngleDeg * (Math.PI/180);
+  const seatTubeLen = avgR * 0.85;
+  let sjX_raw = bbX - Math.cos(seatAngleRad) * seatTubeLen;
+  let sjY_raw = bbY - Math.sin(seatAngleRad) * seatTubeLen;
+  let sj = repelBoth(sjX_raw, sjY_raw, rearAxleX, rearAxleY, rR, frontAxleX, frontAxleY, rF, repelMargin);
+  const seatJointX = sj.x, seatJointY = sj.y;
+
+  const seatPostExtend = avgR * 0.22;
+  let stX_raw = seatJointX - Math.cos(seatAngleRad) * seatPostExtend;
+  let stY_raw = seatJointY - Math.sin(seatAngleRad) * seatPostExtend;
+  let st = repelBoth(stX_raw, stY_raw, rearAxleX, rearAxleY, rR, frontAxleX, frontAxleY, rF, repelMargin);
+  const seatTopX = st.x, seatTopY = st.y;
+
+  // ── Head tube ──
+  // Position: forward from seat joint, with minimum angle constraint
+  const topTubeLen = dist(seatJointX, seatJointY, bbX, bbY) * 1.1 + avgR * 0.3;
+  // Head tube Y: must stay ABOVE seat joint Y to prevent bowing
+  // Minimum top tube angle from horizontal: 10 degrees upward from seat joint toward head tube
+  const minTopTubeAngle = 10 * Math.PI / 180;
+  let htX_raw = seatJointX + topTubeLen * 0.9;
+  // Head tube should be near same height or slightly below seat joint
+  let htY_raw = seatJointY + topTubeLen * 0.05;
+  // Anti-bow constraint: enforce minimum angle
+  const topTubeDY = htY_raw - seatJointY;
+  const topTubeDX = htX_raw - seatJointX;
+  const topTubeAngle = Math.atan2(topTubeDY, topTubeDX);
+  // Top tube should slope gently DOWN (positive angle), but not too much
+  const maxDownAngle = 15 * Math.PI / 180;
+  if(topTubeAngle > maxDownAngle){
+    htY_raw = seatJointY + Math.tan(maxDownAngle) * topTubeDX;
+  }
+
+  let ht = repelBoth(htX_raw, htY_raw, rearAxleX, rearAxleY, rR, frontAxleX, frontAxleY, rF, repelMargin);
+  let headTubeX = ht.x, headTubeY = ht.y;
+
+  // ── Anti-bow check after repulsion ──
+  // After repulsion the head tube may have been pushed down. Re-enforce.
+  const finalTopTubeAngle = Math.atan2(headTubeY - seatJointY, headTubeX - seatJointX);
+  if(finalTopTubeAngle > maxDownAngle){
+    headTubeY = seatJointY + Math.tan(maxDownAngle) * (headTubeX - seatJointX);
+  }
+
+  // ── Fork: head tube to front axle ──
+  // Constraint: stem top must be >= 25% of fork length outside front wheel
+  const forkLen = dist(headTubeX, headTubeY, frontAxleX, frontAxleY);
+  const forkDirX = (frontAxleX - headTubeX) / (forkLen || 1);
+  const forkDirY = (frontAxleY - headTubeY) / (forkLen || 1);
+
+  // Check: how much of fork is outside wheel?
+  // Distance from head tube to front wheel edge (toward head tube)
+  const htDistToAxle = dist(headTubeX, headTubeY, frontAxleX, frontAxleY);
+  const htDistOutside = htDistToAxle - rF;
+  const forkOutsideRatio = htDistOutside / (forkLen || 1);
+
+  // If less than 25% is outside, push head tube back
+  if(forkOutsideRatio < 0.25){
+    const needed = rF + forkLen * 0.25;
+    // Move head tube along fork direction so distance to axle = needed
+    headTubeX = frontAxleX - forkDirX * needed;
+    headTubeY = frontAxleY - forkDirY * needed;
+  }
+
+  // ── Stem: 50% taller ──
+  const stemLen = avgR * 0.25;
+  // Stem goes up from head tube
+  const stemTopX = headTubeX + vbW * 0.003 * (avgR / baseWheelR);
+  const stemTopY = headTubeY - stemLen;
+
+  // ── Stem/handlebar outside wheel constraint ──
+  // Push stem top outside front wheel if inside
+  const stemDistToFront = dist(stemTopX, stemTopY, frontAxleX, frontAxleY);
+  let finalStemTopX = stemTopX;
+  let finalStemTopY = stemTopY;
+  if(stemDistToFront < rF + sw){
+    const sdx = stemTopX - frontAxleX;
+    const sdy = stemTopY - frontAxleY;
+    const slen = Math.sqrt(sdx*sdx+sdy*sdy)||1;
+    finalStemTopX = frontAxleX + (sdx/slen) * (rF + sw * 2);
+    finalStemTopY = frontAxleY + (sdy/slen) * (rF + sw * 2);
+  }
+
+  // ── Colors ──
+  const rearCol = getWheelColor(col, row, true, t);
+  const frontCol = getWheelColor(col, row, false, t);
+
+  // ── RENDER ──
 
   // Wheels
-  els.wheelRear.setAttribute('points',irregularNgon(rearAxleX,rearAxleY,rR,SEGMENTS,time*0.4,1,time));
-  els.wheelRear.setAttribute('fill',rearWheelColor);
-  els.wheelFront.setAttribute('points',irregularNgon(frontAxleX,frontAxleY,rF,SEGMENTS,time*0.5,2,time));
-  els.wheelFront.setAttribute('fill',frontWheelColor);
+  els.wheelRear.setAttribute('points', irregularNgon(rearAxleX, rearAxleY, rR, SEGMENTS, t*0.4+seed, seed, t));
+  els.wheelRear.setAttribute('fill', rearCol);
+  els.wheelFront.setAttribute('points', irregularNgon(frontAxleX, frontAxleY, rF, SEGMENTS, t*0.5+seed, seed+1, t));
+  els.wheelFront.setAttribute('fill', frontCol);
 
-  // Frame
-  els.mainTriangle.setAttribute('points',`${seatJointX},${seatJointY} ${headTubeX},${headTubeY} ${bbX},${bbY}`);
-  els.mainTriangle.setAttribute('fill',mainFrameColor);
-  els.rearTriangle.setAttribute('points',`${seatJointX},${seatJointY} ${bbX},${bbY} ${rearAxleX},${rearAxleY}`);
-  els.rearTriangle.setAttribute('fill',rearFrameColor);
+  // Frame triangles
+  els.mainTriangle.setAttribute('points', `${seatJointX},${seatJointY} ${headTubeX},${headTubeY} ${bbX},${bbY}`);
+  els.mainTriangle.setAttribute('stroke-width', sw);
+  els.rearTriangle.setAttribute('points', `${seatJointX},${seatJointY} ${bbX},${bbY} ${rearAxleX},${rearAxleY}`);
+  els.rearTriangle.setAttribute('stroke-width', sw);
 
   // Fork
-  const forkW=clamp(vbH*0.02*frameThickMult*proxFront,2,vbH*0.1);
-  setLine(els.fork,headTubeX,headTubeY,frontAxleX,frontAxleY);
-  els.fork.setAttribute('stroke',forkColor);
-  els.fork.setAttribute('stroke-width',forkW);
+  setLine(els.fork, headTubeX, headTubeY, frontAxleX, frontAxleY);
+  els.fork.setAttribute('stroke-width', sw);
 
   // Seat post
-  const seatPostW=clamp(vbH*0.02*frameThickMult*proxBB,2,vbH*0.1);
-  setLine(els.seatPost,bbX,bbY,seatTopX,seatTopY);
-  els.seatPost.setAttribute('stroke',seatPostColor);
-  els.seatPost.setAttribute('stroke-width',seatPostW);
+  setLine(els.seatPost, bbX, bbY, seatTopX, seatTopY);
+  els.seatPost.setAttribute('stroke-width', sw);
 
-  // Seat
-  const seatHalfW=(vbH*0.025+vbH*0.015*frameThickMult)*proxBB;
-  const seatH=(vbH*0.025+vbH*0.012*frameThickMult)*proxBB;
-  const seatCornerR=seatH*0.35;
-  const centroidX=seatTopX,centroidY=seatTopY;
-  const topCY=centroidY-seatH/3;
-  const seatShiftX=10;
-  const topCX=centroidX+seatShiftX;
-  const pinY=centroidY+seatH*2/3;
-  const pinX=3*centroidX-2*topCX;
-  els.seat.setAttribute('d',roundedTriPath(topCX-seatHalfW,topCY,topCX+seatHalfW,topCY,pinX,pinY,seatCornerR));
-  els.seat.setAttribute('fill',seatColor);
+  // ── Seat: > chevron pointing right, 10° included angle ──
+  // Centroid pinned to seatpost top
+  // For a symmetric V: centroid is at 2/3 from arm-tip midpoint toward vertex
+  // So vertex is offset from pin point, and arms extend from vertex
+  const seatArmLen = Math.max(avgR * 0.25 - 3, 4);
+  const halfAngle = 5 * Math.PI / 180; // 10° total
+
+  // Forward direction (perpendicular to seatpost, pointing right)
+  const postDX = seatTopX - bbX;
+  const postDY = seatTopY - bbY;
+  const postLen = Math.sqrt(postDX*postDX + postDY*postDY) || 1;
+  const fwdX = postDY / postLen;
+  const fwdY = -postDX / postLen;
+
+  // Vertex is behind the centroid (pin point)
+  // Centroid = vertex + (2/3) * armLen * fwd direction
+  // So vertex = pin - (2/3) * armLen * fwd
+  const vertexX = seatTopX - fwdX * seatArmLen * (2/3);
+  const vertexY = seatTopY - fwdY * seatArmLen * (2/3);
+
+  // Arm tips from vertex
+  const upperDX = fwdX * Math.cos(-halfAngle) - fwdY * Math.sin(-halfAngle);
+  const upperDY = fwdX * Math.sin(-halfAngle) + fwdY * Math.cos(-halfAngle);
+  const lowerDX = fwdX * Math.cos(halfAngle) - fwdY * Math.sin(halfAngle);
+  const lowerDY = fwdX * Math.sin(halfAngle) + fwdY * Math.cos(halfAngle);
+
+  const upperEndX = vertexX + upperDX * seatArmLen;
+  const upperEndY = vertexY + upperDY * seatArmLen;
+  const lowerEndX = vertexX + lowerDX * seatArmLen;
+  const lowerEndY = vertexY + lowerDY * seatArmLen;
+
+  // Lower arm (behind, lower z)
+  setLine(els.seatLower, vertexX, vertexY, lowerEndX, lowerEndY);
+  els.seatLower.setAttribute('stroke-width', sw);
+  // Upper arm (on top)
+  setLine(els.seatUpper, vertexX, vertexY, upperEndX, upperEndY);
+  els.seatUpper.setAttribute('stroke-width', sw);
 
   // Crankset
-  const crankR=clamp(vbH*0.022*frameThickMult*proxBB,vbH*0.01,vbH*0.07);
-  els.crankset.setAttribute('points',irregularNgon(bbX,bbY,crankR,SEGMENTS,time*0.7,3,time));
-  els.crankset.setAttribute('fill',crankColor);
+  const crankR = clamp(avgR * 0.1, vbH * 0.004, vbH * 0.035);
+  els.crankset.setAttribute('points', irregularNgon(bbX, bbY, crankR, SEGMENTS, t*0.7+seed, seed+2, t));
+  els.crankset.setAttribute('fill', DARK);
 
   // Stem
-  const stemTopX=headTubeX+vbW*0.006;
-  const stemTopY=headTubeY-vbH*0.038*proxHead;
-  const stemW=clamp(vbH*0.014*frameThickMult*proxHead,2,vbH*0.07);
-  setLine(els.stem,headTubeX,headTubeY,stemTopX,stemTopY);
-  els.stem.setAttribute('stroke',barColor);
-  els.stem.setAttribute('stroke-width',stemW);
+  setLine(els.stem, headTubeX, headTubeY, finalStemTopX, finalStemTopY);
+  els.stem.setAttribute('stroke-width', sw);
 
   // Drop bar
-  const dropR=clamp(vbH*0.025*frameThickMult*proxHead,vbH*0.008,vbH*0.07);
-  const barExt=vbW*0.022*frameLenMult;
-  const arcSX=stemTopX+barExt;
-  const barW=clamp(vbH*0.012*frameThickMult*proxHead,2,vbH*0.065);
-  els.dropBar.setAttribute('d',`M ${stemTopX-vbW*0.008},${stemTopY} L ${arcSX},${stemTopY} A ${dropR} ${dropR} 0 1 1 ${arcSX},${stemTopY+dropR*2}`);
-  els.dropBar.setAttribute('stroke',barColor);
-  els.dropBar.setAttribute('stroke-width',barW);
+  const dropR = clamp(avgR * 0.12, vbH * 0.004, vbH * 0.035);
+  const barExt = avgR * 0.15;
+  const arcSX = finalStemTopX + barExt;
+  els.dropBar.setAttribute('d', `M ${finalStemTopX-avgR*0.04},${finalStemTopY} L ${arcSX},${finalStemTopY} A ${dropR} ${dropR} 0 1 1 ${arcSX},${finalStemTopY+dropR*2}`);
+  els.dropBar.setAttribute('stroke-width', sw);
+}
 
+function update(){
+  time += 0.008;
+  smooth.x = lerp(smooth.x, input.x, 0.055);
+  smooth.y = lerp(smooth.y, input.y, 0.055);
+  for(let i=0; i<bikes.length; i++){
+    updateBike(bikes[i], smooth.x, smooth.y, time);
+  }
   requestAnimationFrame(update);
 }
 
-document.addEventListener('mousemove',(e)=>{if(!useGyro){input.x=e.clientX/window.innerWidth;input.y=e.clientY/window.innerHeight;}});
-document.addEventListener('touchmove',(e)=>{if(!useGyro){const t=e.touches[0];input.x=t.clientX/window.innerWidth;input.y=t.clientY/window.innerHeight;}},{passive:true});
-function handleOrientation(e){input.x=clamp(map(e.gamma||0,-40,40,0,1),0,1);input.y=clamp(map(e.beta||0,20,70,0,1),0,1);}
-function initGyro(){useGyro=true;window.addEventListener('deviceorientation',handleOrientation,true);$('motionPrompt').classList.remove('visible');}
+// ── Input ──
+document.addEventListener('mousemove',(e)=>{
+  if(!useGyro){input.x=e.clientX/window.innerWidth;input.y=e.clientY/window.innerHeight;}
+});
+document.addEventListener('touchmove',(e)=>{
+  if(!useGyro){const t=e.touches[0];input.x=t.clientX/window.innerWidth;input.y=t.clientY/window.innerHeight;}
+},{passive:true});
+function handleOrientation(e){
+  input.x=clamp(map(e.gamma||0,-40,40,0,1),0,1);
+  input.y=clamp(map(e.beta||0,20,70,0,1),0,1);
+}
+function initGyro(){
+  useGyro=true;
+  window.addEventListener('deviceorientation',handleOrientation,true);
+  document.getElementById('motionPrompt').classList.remove('visible');
+}
 function checkMotion(){
   if(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))return;
   if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
-    $('motionPrompt').classList.add('visible');
-    $('motionBtn').addEventListener('click',async()=>{try{const p=await DeviceOrientationEvent.requestPermission();if(p==='granted')initGyro();else $('motionPrompt').classList.remove('visible');}catch{$('motionPrompt').classList.remove('visible');}});
+    document.getElementById('motionPrompt').classList.add('visible');
+    document.getElementById('motionBtn').addEventListener('click',async()=>{
+      try{
+        const p=await DeviceOrientationEvent.requestPermission();
+        if(p==='granted')initGyro();
+        else document.getElementById('motionPrompt').classList.remove('visible');
+      }catch{document.getElementById('motionPrompt').classList.remove('visible');}
+    });
   }else if('DeviceOrientationEvent' in window)initGyro();
 }
 checkMotion();
